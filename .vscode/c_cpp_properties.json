@@ -1,0 +1,25 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${default}",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/home/hao/Desktop/SLAM/devel/include/**",
+        "/opt/ros/noetic/include/**",
+        "/home/hao/Desktop/SLAM/src/Lidar_SLAM/dynamic_robot_localization/include/**",
+        "/home/hao/Desktop/SLAM/src/Lidar_SLAM/FAST_LIO-main2/include/**",
+        "/home/hao/Desktop/SLAM/src/Lidar_SLAM/laserscan_to_pointcloud/include/**",
+        "/home/hao/Desktop/SLAM/src/Lidar_SLAM/pose_to_tf_publisher-melodic-devel/include/**",
+        "/usr/include/**"
+      ],
+      "name": "ROS",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++14"
+    }
+  ],
+  "version": 4
+}

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
+# pragma once
+
 #include <ctime>
 #include <mutex>
 #include <atomic>
@@ -76,19 +78,20 @@ using namespace std;
 
 namespace radar_graph_slam {
 
-class RadarGraphSlamNodelet : public nodelet::Nodelet, public ParamServer {
+class RadarGraphSlam : public ParamServer {
 public:
   typedef pcl::PointXYZI PointT;
   typedef PointXYZIRPYT  PointTypePose;
   typedef message_filters::sync_policies::ApproximateTime<nav_msgs::Odometry, sensor_msgs::PointCloud2> ApproxSyncPolicy;
 
-  RadarGraphSlamNodelet() {}
-  virtual ~RadarGraphSlamNodelet() {}
+  RadarGraphSlam(ros::NodeHandle& nh): nh(nh), mt_nh(nh), private_nh("~") {}
+  // virtual ~RadarGraphSlam() {}
+  ~RadarGraphSlam() {}
 
-  virtual void onInit() {
-    nh = getNodeHandle();
-    mt_nh = getMTNodeHandle();
-    private_nh = getPrivateNodeHandle();
+  virtual void onInit(){
+    // nh = getNodeHandle();
+    // mt_nh = getMTNodeHandle();
+    // private_nh = getPrivateNodeHandle();
 
     // init parameters
     map_cloud_resolution = private_nh.param<double>("map_cloud_resolution", 0.05);
@@ -138,20 +141,20 @@ public:
     odom_sub.reset(new message_filters::Subscriber<nav_msgs::Odometry>(mt_nh, odomTopic, 256));
     cloud_sub.reset(new message_filters::Subscriber<sensor_msgs::PointCloud2>(mt_nh, "/filtered_points", 32));
     sync.reset(new message_filters::Synchronizer<ApproxSyncPolicy>(ApproxSyncPolicy(32), *odom_sub, *cloud_sub));
-    sync->registerCallback(boost::bind(&RadarGraphSlamNodelet::cloud_callback, this, _1, _2));
+    sync->registerCallback(boost::bind(&RadarGraphSlam::cloud_callback, this, _1, _2));
     
     if(private_nh.param<bool>("enable_gps", true)) {
-      gps_sub = mt_nh.subscribe("/gps/geopoint", 1024, &RadarGraphSlamNodelet::gps_callback, this);
-      nmea_sub = mt_nh.subscribe("/gpsimu_driver/nmea_sentence", 1024, &RadarGraphSlamNodelet::nmea_callback, this);
-      navsat_sub = mt_nh.subscribe(gpsTopic, 1024, &RadarGraphSlamNodelet::navsat_callback, this);
+      gps_sub = mt_nh.subscribe("/gps/geopoint", 1024, &RadarGraphSlam::gps_callback, this);
+      nmea_sub = mt_nh.subscribe("/gpsimu_driver/nmea_sentence", 1024, &RadarGraphSlam::nmea_callback, this);
+      navsat_sub = mt_nh.subscribe(gpsTopic, 1024, &RadarGraphSlam::navsat_callback, this);
     }
     if(private_nh.param<bool>("enable_barometer", false)) {
-      barometer_sub = mt_nh.subscribe("/barometer/filtered", 16, &RadarGraphSlamNodelet::barometer_callback, this);
+      barometer_sub = mt_nh.subscribe("/barometer/filtered", 16, &RadarGraphSlam::barometer_callback, this);
     }
     if (enable_preintegration)
-      imu_odom_sub = nh.subscribe("/imu_pre_integ/imu_odom_incre", 1024, &RadarGraphSlamNodelet::imu_odom_callback, this);
-    imu_sub = nh.subscribe("/imu", 1024, &RadarGraphSlamNodelet::imu_callback, this);
-    command_sub = nh.subscribe("/command", 10, &RadarGraphSlamNodelet::command_callback, this);
+      imu_odom_sub = nh.subscribe("/imu_pre_integ/imu_odom_incre", 1024, &RadarGraphSlam::imu_odom_callback, this);
+    imu_sub = nh.subscribe("/imu", 1024, &RadarGraphSlam::imu_callback, this);
+    command_sub = nh.subscribe("/command", 10, &RadarGraphSlam::command_callback, this);
 
     //***** publishers ******
     markers_pub = mt_nh.advertise<visualization_msgs::MarkerArray>("/radar_graph_slam/markers", 16);
@@ -163,14 +166,14 @@ public:
     read_until_pub = mt_nh.advertise<std_msgs::Header>("/radar_graph_slam/read_until", 32);
     odom_frame2frame_pub = mt_nh.advertise<nav_msgs::Odometry>("/radar_graph_slam/odom_frame2frame", 16);
 
-    dump_service_server = mt_nh.advertiseService("/radar_graph_slam/dump", &RadarGraphSlamNodelet::dump_service, this);
-    save_map_service_server = mt_nh.advertiseService("/radar_graph_slam/save_map", &RadarGraphSlamNodelet::save_map_service, this);
+    dump_service_server = mt_nh.advertiseService("/radar_graph_slam/dump", &RadarGraphSlam::dump_service, this);
+    save_map_service_server = mt_nh.advertiseService("/radar_graph_slam/save_map", &RadarGraphSlam::save_map_service, this);
 
     graph_updated = false;
     double graph_update_interval = private_nh.param<double>("graph_update_interval", 3.0);
     double map_cloud_update_interval = private_nh.param<double>("map_cloud_update_interval", 10.0);
-    optimization_timer = mt_nh.createWallTimer(ros::WallDuration(graph_update_interval), &RadarGraphSlamNodelet::optimization_timer_callback, this);
-    map_publish_timer = mt_nh.createWallTimer(ros::WallDuration(map_cloud_update_interval), &RadarGraphSlamNodelet::map_points_publish_timer_callback, this);
+    optimization_timer = mt_nh.createWallTimer(ros::WallDuration(graph_update_interval), &RadarGraphSlam::optimization_timer_callback, this);
+    map_publish_timer = mt_nh.createWallTimer(ros::WallDuration(map_cloud_update_interval), &RadarGraphSlam::map_points_publish_timer_callback, this);
   
     if (dataset_name == "loop3")
     utm_to_world << 
@@ -1358,4 +1361,16 @@ private:
 
 }  // namespace radar_graph_slam
 
-PLUGINLIB_EXPORT_CLASS(radar_graph_slam::RadarGraphSlamNodelet, nodelet::Nodelet)
+
+int main(int argc, char **argv)
+{
+  ros::init(argc, argv, "radargraphslam_node"); // 这里填入你的节点名称
+  ros::NodeHandle nh;
+  // ros::NodeHandle mt_nh = ros::getMTNodeHandle();
+
+  std::shared_ptr<radar_graph_slam::RadarGraphSlam> radargraphslam_ptr_ = std::make_shared<radar_graph_slam::RadarGraphSlam>(nh);
+  radargraphslam_ptr_->onInit();
+
+  ros::spin();
+  return 0;
+}

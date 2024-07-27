@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
+# pragma once
 
 #include <string>
 #include <fstream>
@@ -10,6 +11,8 @@
 #include <pcl_ros/point_cloud.h>
 #include <tf/transform_listener.h>
 #include <tf/transform_broadcaster.h>
+#include <tf/transform_datatypes.h>
+#include <tf_conversions/tf_eigen.h>
 
 #include <std_msgs/String.h>
 #include <sensor_msgs/Imu.h>
@@ -30,10 +33,17 @@
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/filters/fast_bilateral.h>
 #include <pcl/filters/filter.h>
+#include <pcl/common/transforms.h>
 
 #include <opencv2/imgproc/imgproc.hpp>
 
 #include <Eigen/Dense>
+#include <Eigen/Geometry>
+
+#include <message_filters/subscriber.h>
+#include <message_filters/time_synchronizer.h>
+#include <message_filters/sync_policies/approximate_time.h>
+#include <pcl_conversions/pcl_conversions.h>
 
 #include "radar_ego_velocity_estimator.h"
 #include "rio_utils/radar_point_cloud.h"
@@ -43,41 +53,43 @@ using namespace std;
 
 namespace radar_graph_slam {
 
-class PreprocessingNodelet : public nodelet::Nodelet, public ParamServer {
+class Preprocessing : public ParamServer {
 public: 
   // typedef pcl::PointXYZI PointT;
   typedef pcl::PointXYZI PointT;
 
-  PreprocessingNodelet() {}
-  virtual ~PreprocessingNodelet() {}
+  Preprocessing(ros::NodeHandle& nh): nh(nh), private_nh("~") {}
+  virtual ~Preprocessing() {}
 
   virtual void onInit() {
-    nh = getNodeHandle();
-    private_nh = getPrivateNodeHandle();
+    // nh = getNodeHandle();
+    // private_nh = getPrivateNodeHandle();
 
     initializeTransformation();
     initializeParams();
 
-    // HAO TODO: add topic for radar data
-    // points_sub = nh.subscribe(pointCloudTopic, 64, &PreprocessingNodelet::cloud_callback, this);
+    ROS_INFO("pointCloudTopic: %s", pointCloudTopic.c_str());
     if (pointCloudTopic == "/pcl2_visualize_2"){
         // 回调函数
-      pcl2_sub_ = nh.subscribe("/pcl2_visualize_2", 1, &PreprocessingNodelet::pcl2_callback, this);
-      radar_sub_ = nh.subscribe("/radar/trigger", 1, &PreprocessingNodelet::radar_trigger_callback, this);
-      points_sub = nh.subscribe("/pcl2_sync_2", 64, &PreprocessingNodelet::cloud2_callback, this);
+        ROS_INFO("Use own dataset");
+      pcl2_sub_ = nh.subscribe("/pcl2_visualize_2", 1, &Preprocessing::pcl2_callback, this);
+      radar_sub_ = nh.subscribe("/radar/trigger", 1, &Preprocessing::radar_trigger_callback, this);
+      points_sub = nh.subscribe("/pcl2_sync_2", 64, &Preprocessing::cloud2_callback, this);
     }
     else
-      points_sub = nh.subscribe(pointCloudTopic, 64, &PreprocessingNodelet::cloud_callback, this);
-
-    pc2_sync_pub = nh.advertise<sensor_msgs::PointCloud2>("/pcl2_sync_2", 16);  
-
-    imu_sub = nh.subscribe(imuTopic, 1, &PreprocessingNodelet::imu_callback, this);
-    command_sub = nh.subscribe("/command", 10, &PreprocessingNodelet::command_callback, this);
+    {
+      ROS_INFO("Use default dataset");
+      points_sub = nh.subscribe(pointCloudTopic, 64, &Preprocessing::cloud_callback, this);
+    }
+    imu_sub = nh.subscribe(imuTopic, 1, &Preprocessing::imu_callback, this);
+    command_sub = nh.subscribe("/command", 10, &Preprocessing::command_callback, this);
 
     points_pub = nh.advertise<sensor_msgs::PointCloud2>("/filtered_points", 32);
     colored_pub = nh.advertise<sensor_msgs::PointCloud2>("/colored_points", 32);
     imu_pub = nh.advertise<sensor_msgs::Imu>("/imu", 32);
     gt_pub = nh.advertise<nav_msgs::Odometry>("/aftmapped_to_init", 16);
+
+    pc2_sync_pub = nh.advertise<sensor_msgs::PointCloud2>("/pcl2_sync_2", 16);
   
     std::string topic_twist = private_nh.param<std::string>("topic_twist", "/eagle_data/twist");
     std::string topic_inlier_pc2 = private_nh.param<std::string>("topic_inlier_pc2", "/eagle_data/inlier_pc2");
@@ -274,10 +286,10 @@ private:
       
       gt_pub.publish(odom_msgs.front());
     }
+
+    // ROS_INFO("IMU callback finished");
   }
 
-
-// HAO TODO: add ARS548 radar data
   void radar_trigger_callback(const std_msgs::Header::ConstPtr& header_msg) {
       // 将 /radar/trigger 的时间戳存入 queue 中
       radar_times.push(*header_msg);
@@ -306,6 +318,47 @@ private:
       // 发布更新后的消息
       pc2_sync_pub.publish(updated_msg);
   }
+
+
+  // void cloud2_callback(const sensor_msgs::PointCloud2::ConstPtr& cloud_msg) {
+  //   // Create a PointCloud for processing
+  //   pcl::PointCloud<RadarPointCloudType>::Ptr radarcloud_raw(new pcl::PointCloud<RadarPointCloudType>);
+  //   pcl::PointCloud<PointT>::Ptr radarcloud_xyzi(new pcl::PointCloud<PointT>);
+
+  //   // Convert the sensor_msgs::PointCloud2 message to a pcl::PointCloud
+  //   pcl::PointCloud<PointT> pcl_cloud;
+  //   pcl::fromROSMsg(*cloud_msg, pcl_cloud);
+
+  //   radarcloud_xyzi->header.frame_id = baselinkFrame;
+  //   radarcloud_xyzi->header.seq = cloud_msg->header.seq;
+  //   radarcloud_xyzi->header.stamp = cloud_msg->header.stamp.toSec() * 1e6;
+
+  //   for (const auto& point : pcl_cloud.points) {
+  //       if (point.intensity > power_threshold) {
+  //           if (std::isnan(point.x) || std::isnan(point.y) || std::isnan(point.z)) continue;
+  //           if (std::isinf(point.x) || std::isinf(point.y) || std::isinf(point.z)) continue;
+            
+  //           // Transform the point from Radar to Livox
+  //           cv::Mat ptMat = (cv::Mat_<double>(4, 1) << point.x, point.y, point.z, 1);
+  //           cv::Mat dstMat = Radar_to_livox * ptMat;
+
+  //           RadarPointCloudType radarpoint_raw;
+  //           radarpoint_raw.x = dstMat.at<double>(0, 0);
+  //           radarpoint_raw.y = dstMat.at<double>(1, 0);
+  //           radarpoint_raw.z = dstMat.at<double>(2, 0);
+  //           radarpoint_raw.intensity = point.intensity;
+  //           radarpoint_raw.doppler = point.velocity;
+
+  //           PointT radarpoint_xyzi;
+  //           radarpoint_xyzi.x = dstMat.at<double>(0, 0);
+  //           radarpoint_xyzi.y = dstMat.at<double>(1, 0);
+  //           radarpoint_xyzi.z = dstMat.at<double>(2, 0);
+  //           radarpoint_xyzi.intensity = point.intensity;
+
+  //           radarcloud_raw->points.push_back(radarpoint_raw);
+  //           radarcloud_xyzi->points.push_back(radarpoint_xyzi);
+  //       }
+  //   }
 
 void cloud2_callback(const sensor_msgs::PointCloud2::ConstPtr& cloud_msg) {
     pcl::PointCloud<pcl::PointXYZI>::Ptr radarcloud_xyzi(new pcl::PointCloud<pcl::PointXYZI>);
@@ -411,7 +464,7 @@ void cloud2_callback(const sensor_msgs::PointCloud2::ConstPtr& cloud_msg) {
     pcl::PointCloud<PointT>::Ptr radarcloud_inlier(new pcl::PointCloud<PointT>);
     pcl::fromROSMsg(inlier_radar_msg, *radarcloud_inlier);
 
-    pcl::PointCloud<PointT>::ConstPtr src_cloud;
+    pcl::PointCloud<PointT>::Ptr src_cloud;
     if (enable_dynamic_object_removal)
         src_cloud = radarcloud_inlier;
     else
@@ -422,7 +475,7 @@ void cloud2_callback(const sensor_msgs::PointCloud2::ConstPtr& cloud_msg) {
     }
     src_cloud = deskewing(src_cloud);
     ROS_INFO("A");
-    // if baselinkFrame is defined, transform the input cloud to the frame
+
     if(!baselinkFrame.empty()) {
       if(!tf_listener.canTransform(baselinkFrame, src_cloud->header.frame_id, ros::Time(0))) {
         std::cerr << "failed to find transform between " << baselinkFrame << " and " << src_cloud->header.frame_id << std::endl;
@@ -432,11 +485,12 @@ void cloud2_callback(const sensor_msgs::PointCloud2::ConstPtr& cloud_msg) {
       tf_listener.waitForTransform(baselinkFrame, src_cloud->header.frame_id, ros::Time(0), ros::Duration(2.0));
       tf_listener.lookupTransform(baselinkFrame, src_cloud->header.frame_id, ros::Time(0), transform);
 
-      pcl::PointCloud<PointT>::Ptr transformed(new pcl::PointCloud<PointT>());
-      pcl_ros::transformPointCloud(*src_cloud, *transformed, transform);
-      transformed->header.frame_id = baselinkFrame;
-      transformed->header.stamp = src_cloud->header.stamp;
-      src_cloud = transformed;
+      pcl::PointCloud<PointT> transformed;
+      // pcl_ros::transformPointCloud(*src_cloud, transformed, transform);
+      transformPointCloud(src_cloud, transformed, transform);
+      transformed.header.frame_id = baselinkFrame;
+      transformed.header.stamp = (*src_cloud).header.stamp;
+      src_cloud.reset(new pcl::PointCloud<PointT>(transformed));
     }
 
     pcl::PointCloud<PointT>::ConstPtr filtered = distance_filter(src_cloud);
@@ -460,6 +514,35 @@ void cloud2_callback(const sensor_msgs::PointCloud2::ConstPtr& cloud_msg) {
     
     points_pub.publish(*filtered);
     
+  }
+
+  void set_cloud_1(const sensor_msgs::PointCloud::ConstPtr& eagle_msg)
+  {
+    ;
+  }
+
+  void transformTFToEigen(const tf::Transform &t, Eigen::Matrix4f &eigen_transform) {
+      for (int i = 0; i < 3; ++i) {
+          for (int j = 0; j < 3; ++j) {
+              eigen_transform(i, j) = t.getBasis()[i][j];
+          }
+          eigen_transform(i, 3) = t.getOrigin()[i];
+      }
+      eigen_transform(3, 0) = eigen_transform(3, 1) = eigen_transform(3, 2) = 0.0;
+      eigen_transform(3, 3) = 1.0;
+  }
+
+
+  void transformPointCloud(const pcl::PointCloud<PointT>::Ptr& src_cloud,
+                          pcl::PointCloud<PointT>& transformed_cloud,
+                          const tf::Transform& transform)
+  {
+      // Convert tf::Transform to Eigen::Matrix4f
+      Eigen::Matrix4f eigen_transform;
+      transformTFToEigen(transform, eigen_transform);
+
+      // Perform the actual point cloud transformation
+      pcl::transformPointCloud(*src_cloud, transformed_cloud, eigen_transform);
   }
 
   void cloud_callback(const sensor_msgs::PointCloud::ConstPtr&  eagle_msg) { // const pcl::PointCloud<PointT>& src_cloud_r
@@ -535,20 +618,37 @@ void cloud2_callback(const sensor_msgs::PointCloud2::ConstPtr& cloud_msg) {
     pcl::PointCloud<PointT>::Ptr radarcloud_inlier( new pcl::PointCloud<PointT> );
     pcl::fromROSMsg (inlier_radar_msg, *radarcloud_inlier);
 
-    pcl::PointCloud<PointT>::ConstPtr src_cloud;
+    // pcl::PointCloud<PointT>::Ptr src_cloud;
+    pcl::PointCloud<PointT>::Ptr src_cloud(new pcl::PointCloud<PointT>);
+    // pcl::PointCloud<PointT>::Ptr src_cloud;
     if (enable_dynamic_object_removal)
-      src_cloud = radarcloud_inlier;
+      // src_cloud = radarcloud_inlier;
+      pcl::copyPointCloud(*radarcloud_inlier, *src_cloud);
     else
-      src_cloud = radarcloud_xyzi;
+      // src_cloud = radarcloud_xyzi;
+      pcl::copyPointCloud(*radarcloud_xyzi, *src_cloud);
+
+    // pcl::PointCloud<PointT>::Ptr radarcloud_inlier( new pcl::PointCloud<PointT> );
+    // pcl::fromROSMsg (inlier_radar_msg, *radarcloud_inlier);
+
+    // // pcl::PointCloud<PointT>::Ptr src_cloud;
+    // pcl::PointCloud<PointT>::Ptr src_cloud(new pcl::PointCloud<PointT>);
+    // if (enable_dynamic_object_removal)
+    //   // src_cloud = radarcloud_inlier;
+    //   pcl::copyPointCloud(*radarcloud_inlier, *src_cloud);
+    // else
+    //   // src_cloud = radarcloud_xyzi;
+    //   pcl::copyPointCloud(*radarcloud_xyzi, *src_cloud);
 
     
     if(src_cloud->empty()) {
       return;
     }
 
+    std::cout << "src_cloud use_count after transformation: " << src_cloud.use_count() << std::endl;
     src_cloud = deskewing(src_cloud);
+    std::cout << "src_cloud use_count after transformation: " << src_cloud.use_count() << std::endl;
 
-    // if baselinkFrame is defined, transform the input cloud to the frame
     if(!baselinkFrame.empty()) {
       if(!tf_listener.canTransform(baselinkFrame, src_cloud->header.frame_id, ros::Time(0))) {
         std::cerr << "failed to find transform between " << baselinkFrame << " and " << src_cloud->header.frame_id << std::endl;
@@ -557,19 +657,23 @@ void cloud2_callback(const sensor_msgs::PointCloud2::ConstPtr& cloud_msg) {
       tf::StampedTransform transform;
       tf_listener.waitForTransform(baselinkFrame, src_cloud->header.frame_id, ros::Time(0), ros::Duration(2.0));
       tf_listener.lookupTransform(baselinkFrame, src_cloud->header.frame_id, ros::Time(0), transform);
-
-      pcl::PointCloud<PointT>::Ptr transformed(new pcl::PointCloud<PointT>());
-      pcl_ros::transformPointCloud(*src_cloud, *transformed, transform);
-      transformed->header.frame_id = baselinkFrame;
-      transformed->header.stamp = src_cloud->header.stamp;
-      src_cloud = transformed;
+      std::cout << "src_cloud use_count after transformation: " << src_cloud.use_count() << std::endl;
+      pcl::PointCloud<PointT> transformed;
+      // pcl_ros::transformPointCloud(*src_cloud, transformed, transform);
+      transformPointCloud(src_cloud, transformed, transform);
+      transformed.header.frame_id = baselinkFrame;
+      transformed.header.stamp = (*src_cloud).header.stamp;
+      src_cloud.reset(new pcl::PointCloud<PointT>(transformed));
     }
 
+    std::cout << "src_cloud2 use_count after transformation: " << src_cloud.use_count() << std::endl;
+    
     pcl::PointCloud<PointT>::ConstPtr filtered = distance_filter(src_cloud);
+    std::cout << "filtered use_count after point callback: " << filtered.use_count() << std::endl;
     // filtered = passthrough(filtered);
     filtered = downsample(filtered);
     filtered = outlier_removal(filtered);
-
+    std::cout << "filtered use_count after point callback: " << filtered.use_count() << std::endl;
     // Distance Histogram
     static size_t num_frame = 0;
     if (num_frame % 10 == 0) {
@@ -583,7 +687,10 @@ void cloud2_callback(const sensor_msgs::PointCloud2::ConstPtr& cloud_msg) {
     }
 
     points_pub.publish(*filtered);
-    
+    // ROS_INFO("points finish");
+    // ROS_INFO("points callback finished");
+    std::cout << "filtered use_count after point callback: " << filtered.use_count() << std::endl;
+    std::cout << "src_cloud2 use_count after point callback: " << src_cloud.use_count() << std::endl;
   }
 
 
@@ -634,13 +741,14 @@ void cloud2_callback(const sensor_msgs::PointCloud2::ConstPtr& cloud_msg) {
     return filtered;
   }
 
-  pcl::PointCloud<PointT>::ConstPtr distance_filter(const pcl::PointCloud<PointT>::ConstPtr& cloud) const {
+  pcl::PointCloud<PointT>::ConstPtr distance_filter(const pcl::PointCloud<PointT>::Ptr& cloud) const {
     pcl::PointCloud<PointT>::Ptr filtered(new pcl::PointCloud<PointT>());
 
     filtered->reserve(cloud->size());
     std::copy_if(cloud->begin(), cloud->end(), std::back_inserter(filtered->points), [&](const PointT& p) {
       double d = p.getVector3fMap().norm();
       double z = p.z;
+      // std::cout<< "d = " << d << " z = " << z << std::endl;
       return d > distance_near_thresh && d < distance_far_thresh && z < z_high_thresh && z > z_low_thresh;
     });
     // for (size_t i=0; i<cloud->size(); i++){
@@ -660,10 +768,10 @@ void cloud2_callback(const sensor_msgs::PointCloud2::ConstPtr& cloud_msg) {
     return filtered;
   }
 
-  pcl::PointCloud<PointT>::ConstPtr deskewing(const pcl::PointCloud<PointT>::ConstPtr& cloud) {
+  pcl::PointCloud<PointT>::Ptr deskewing(const pcl::PointCloud<PointT>::Ptr& cloud) {
     ros::Time stamp = pcl_conversions::fromPCL(cloud->header.stamp);
     if(imu_queue.empty()) {
-      return cloud;
+      return cloud->makeShared();
     }
 
     // the color encodes the point number in the point sequence
@@ -769,6 +877,8 @@ void cloud2_callback(const sensor_msgs::PointCloud2::ConstPtr& cloud_msg) {
       }
       cout << endl;
     }
+
+    // ROS_INFO("CMD callback finished");
   }
 
 private:
@@ -784,19 +894,15 @@ private:
   ros::Publisher imu_pub;
   ros::Publisher gt_pub;
 
+  ros::Publisher pc2_sync_pub;
+
   tf::TransformListener tf_listener;
   tf::TransformBroadcaster tf_broadcaster;
 
-  // HAO TODO: add subscriber
-  ros::Subscriber pcl2_sub_;
-  ros::Subscriber radar_sub_;
-
-  // HAO TODO: add publisher
-  ros::Publisher pc2_sync_pub;
-
-  // HAO TODO: add radar buffer
   std::queue<std_msgs::Header> radar_times;
   std::queue<sensor_msgs::PointCloud2> radar_datas;
+  ros::Subscriber pcl2_sub_;
+  ros::Subscriber radar_sub_;
 
 
   bool use_distance_filter;
@@ -828,4 +934,15 @@ private:
 
 }  // namespace radar_graph_slam
 
-PLUGINLIB_EXPORT_CLASS(radar_graph_slam::PreprocessingNodelet, nodelet::Nodelet)
+
+int main(int argc, char **argv)
+{
+  ros::init(argc, argv, "preprocessing_node"); // 这里填入你的节点名称
+  ros::NodeHandle nh;
+
+  std::shared_ptr<radar_graph_slam::Preprocessing> preprocess_ptr_ = std::make_shared<radar_graph_slam::Preprocessing>(nh);
+  preprocess_ptr_->onInit();
+
+  ros::spin();
+  return 0;
+}

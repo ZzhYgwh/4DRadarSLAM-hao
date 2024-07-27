@@ -30,7 +30,7 @@ namespace rio
 struct RadarEgoVelocityEstimatorConfig
 {
  float min_dist = 1;
- float max_dist = 400;
+ float max_dist = 300;    // RS548 300 m
  float min_db = 10;
  float elevation_thresh_deg = 22.5;
  float azimuth_thresh_deg = 56.5;

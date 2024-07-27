@@ -80,6 +80,13 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
       Real azimuth   = std::atan2(target.y, target.x);
       Real elevation = std::atan2(std::sqrt(target.x * target.x + target.y * target.y), target.z)- M_PI_2;
 
+      // ROS_INFO("radar config = [");
+      // ROS_INFO("config_.dist = [ %f, %f], actual = %f", config_.min_dist, config_.max_dist, r);
+      // ROS_INFO("config_.db = %f, actual = %f", config_.min_db, target.intensity);
+      // ROS_INFO("config_.azimuth_thresh_deg = %f, actual = %f", angles::from_degrees(config_.azimuth_thresh_deg), std::fabs(azimuth));
+      // ROS_INFO("config_.elevation_thresh_deg = %f, actual = %f", angles::from_degrees(config_.elevation_thresh_deg), std::fabs(elevation));
+      // ROS_INFO("]");
+
       if (r > config_.min_dist && r < config_.max_dist && target.intensity > config_.min_db &&
           std::fabs(azimuth) < angles::from_degrees(config_.azimuth_thresh_deg) &&
           std::fabs(elevation) < angles::from_degrees(config_.elevation_thresh_deg))
@@ -96,6 +103,8 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
       // }
     }
 
+    // ROS_INFO("valid_targets = %d", valid_targets.size());
+
     if (valid_targets.size() > 2)
     {
       // check for zero velocity
@@ -104,7 +113,8 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
       const size_t n = v_dopplers.size() * (1.0 - config_.allowed_outlier_percentage);
       std::nth_element(v_dopplers.begin(), v_dopplers.begin() + n, v_dopplers.end());
       const auto median = v_dopplers[n];
-      
+
+      // ROS_INFO("checkout zero velocity = %f, actually = %f", config_.thresh_zero_velocity, median);      
       if (median < config_.thresh_zero_velocity)
       {
         // ROS_INFO_STREAM_THROTTLE(0.5, kPrefix << "Zero velocity detected!");
