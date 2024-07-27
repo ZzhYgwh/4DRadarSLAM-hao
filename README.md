@@ -1,3 +1,6 @@
+# 4DRadarSLAM-hao
+Modify the nodelet version to ros node format to solve the problem of point cloud pointer error.
+
 # 4DRadarSLAM
 ## A 4D Imaging Radar SLAM System for Large-scale Environments based on Pose Graph Optimization
 
